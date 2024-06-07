@@ -1,0 +1,132 @@
+---
+title: "NORS National Outbreak Data Analysis and Visualization"
+author: "Carmen Raterman"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: html_document
+---
+
+# To retrieve the data:
+
+1\. Visit the CDC NORS website at: <https://wwwn.cdc.gov/norsdashboard/>
+
+2\. Check only the "Foodborne" box for type of outbreak
+
+3\. Under "Year" select "Custom range" and input from 2011 to 2021 (10 years)
+
+4\. Scroll down to "Download Data" and click "Download current search data (excel)" to import the data on your local machine
+
+5\. Follow the steps below for importing the data to R Studio and performing analysis and visualization
+
+# Import Data
+
+```{r data-setup}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+#necessary libraries to download and call
+install.packages("pacman")
+library(pacman)
+p_load(tidyverse, rio, ggplot2, readxl)
+
+#read in the data from excel format to R compatible format
+nat_outbreak_data <- read_excel("NationalOutbreakPublicDataTool.xlsx")
+
+#this function allows us to inspect the first few observations of the data to double check that it imported successfully
+head(nat_outbreak_data)
+
+```
+
+# Data Visualization and Analysis
+
+## Poisson GLM
+
+```{r, analysis}
+
+#re-arranging the data to aggregate for analysis, and dropping "multi-state"
+#grouping the observations by state and year to get a count of total illnesses by state and year
+outbreak_data_agg <- nat_outbreak_data %>%
+  filter(State != "Multistate") %>%
+  group_by(State, Year) %>%
+  summarize(Total_Illnesses = sum(Illnesses))
+
+
+#now doing poisson glm 
+model_output <- glm(Total_Illnesses ~ State + Year, family = "poisson", data = outbreak_data_agg)
+summary(model_output)
+
+```
+
+```{r, map-creation}
+library(sf)
+library(tidyverse)
+library(tmap)
+library(tmaptools)
+
+#read in the shapefile of states
+states <- st_read("States_shapefile.shp")
+
+#re-arrange our aggregate data to now show prevalence
+#doing so normalizes the data a bit more for effective visualization on the map
+outbreak_data_agg_prev <- outbreak_data_agg %>% 
+  group_by(Year) %>% 
+  mutate(sumYear = sum(Total_Illnesses)) %>% 
+  ungroup() %>% 
+  mutate(prevYear = (Total_Illnesses/sumYear) * 100)
+
+#pivot wider
+illness_wide <- outbreak_data_agg_prev %>%
+                select(State, prevYear, Year) %>% 
+                pivot_wider(values_from = "prevYear", names_from = "Year") %>% 
+                mutate(State = toupper(State))
+
+#left joining so we can combine the illness data to the shapefile for mapping
+state <- states %>%  
+          left_join(illness_wide, by=c("State_Name" = "State"))
+
+#create map for 2011 and store it as variable for side-by-side comparison below
+map_2011 <- tm_shape(state) +
+  tm_fill(col="2011") +
+  tm_borders() +
+  tm_layout(title = "2011 Prevalence of All Foodborne \nIllnesses Reported to NORS in the US",
+            legend.position = c(0.1, 0.1),
+            legend.bg.alpha = 0.5,
+            legend.text.size = 1.0,
+            title.size = 1.1,
+            title.position = c(0.45, 0.9))
+
+#display the individual map for 2011
+tm_shape(state) +
+  tm_fill(col="2011") +
+  tm_borders() +
+  tm_layout(title = "2011 Prevalence of All Foodborne \nIllnesses Reported to NORS in the US",
+            legend.position = c(0.1, 0.1),
+            legend.bg.alpha = 0.5,
+            legend.text.size = 1.0,
+            title.size = 1.1,
+            title.position = c(0.45, 0.9))
+
+#create map for 2021 and store it as variable for side-by-side comparison below
+map_2021 <- tm_shape(state) +
+  tm_fill(col="2021") +
+  tm_borders() +
+  tm_layout(title = "2021 Prevalence of All Foodborne \nIllnesses Reported to NORS in the US",
+            legend.position = c(0.1, 0.1),
+            legend.bg.alpha = 0.5,
+            legend.text.size = 1.0,
+            title.size = 1.1,
+            title.position = c(0.45, 0.9))
+
+#display the individual map for 2021
+tm_shape(state) +
+  tm_fill(col="2021") +
+  tm_borders() +
+  tm_layout(title = "2021 Prevalence of All Foodborne \nIllnesses Reported to NORS in the US",
+            legend.position = c(0.1, 0.1),
+            legend.bg.alpha = 0.5,
+            legend.text.size = 1.0,
+            title.size = 1.1,
+            title.position = c(0.45, 0.9))
+
+#arrange the two maps together for visualization across 10 years
+tmap_arrange(map_2011, map_2021)
+
+```
